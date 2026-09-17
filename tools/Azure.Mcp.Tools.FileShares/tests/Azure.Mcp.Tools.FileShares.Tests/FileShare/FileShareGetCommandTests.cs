@@ -21,6 +21,7 @@ public class FileShareGetCommandTests : SubscriptionCommandUnitTestsBase<FileSha
     {
         Assert.Equal("get", Command.Name);
         Assert.Equal("Get File Share", Command.Title);
+        Assert.Contains("instead of generic Azure resource listing", Command.Description);
         Assert.Equal("get", CommandDefinition.Name);
     }
 

@@ -18,6 +18,7 @@ public class FileShareGetLimitsCommandTests : SubscriptionCommandUnitTestsBase<F
     {
         Assert.Equal("limits", Command.Name);
         Assert.Equal("Get File Share Limits", Command.Title);
+        Assert.Contains("not Azure resource quota usage", Command.Description);
         Assert.Equal("limits", CommandDefinition.Name);
     }
 }
