@@ -1,0 +1,91 @@
+name: Documentation Windows baseline comparison
+on:
+  push:
+    branches: [codex/docs-windows-preflight]
+permissions:
+  contents: read
+jobs:
+  validate:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: [baseline, adme, fileshares]
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    env:
+      AZURE_MCP_COLLECT_TELEMETRY: 'false'
+      BASELINE_SHA: 406c2dbd3b7ef1e4341e449103732f0cb7b59c47
+      TESTED_SHA: ${{ matrix.candidate == 'baseline' && '406c2dbd3b7ef1e4341e449103732f0cb7b59c47' || matrix.candidate == 'adme' && 'c82c61ae157a42f593e541d68c6b3325274160f7' || '128cc0cb029ea0e0a1ccead7aae4bae5dfbf6d25' }}
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: source
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.TESTED_SHA }}
+          path: source
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '10.0.401'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+      - name: Verify source and unchanged runtime code
+        run: |
+          if ((git rev-parse HEAD) -ne $env:TESTED_SHA) { throw 'Unexpected tested revision' }
+          Write-Host "Tested SHA: $env:TESTED_SHA; baseline: $env:BASELINE_SHA"
+          git diff --check "$($env:BASELINE_SHA)...HEAD"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $files = @(git diff --name-only "$($env:BASELINE_SHA)...HEAD")
+          if (('${{ matrix.candidate }}' -ne 'baseline' -and !$files.Count) -or ($files | Where-Object { $_ -notlike '*.md' })) { throw 'Unexpected contribution scope' }
+          dotnet --info
+          node --version
+      - name: Build server
+        run: |
+          dotnet build servers/Azure.Mcp.Server/ --nologo
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build affected toolset
+        run: |
+          $tool = '${{ matrix.candidate }}' -eq 'adme' ? 'Adme' : 'FileShares'
+          dotnet build "tools/Azure.Mcp.Tools.$tool/src/" --nologo
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run server unit tests
+        run: |
+          dotnet test --project servers/Azure.Mcp.Server/tests/Azure.Mcp.Server.Tests/Azure.Mcp.Server.Tests.csproj --no-build --filter-not-trait 'TestType=Live' --report-xunit-trx --output Detailed
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run File Shares unit tests
+        if: ${{ !cancelled() && matrix.candidate != 'adme' }}
+        run: |
+          ./eng/scripts/Test-Code.ps1 -Paths FileShares -TestType Unit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Check spelling with locked dependencies
+        if: ${{ !cancelled() }}
+        run: |
+          Push-Location eng/common/spelling
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Pop-Location
+          $files = @(git diff --name-only "$($env:BASELINE_SHA)...HEAD")
+          if (!$files.Count) { $files = @('servers/Azure.Mcp.Server/README.md', 'servers/Azure.Mcp.Server/docs/azmcp-commands.md') }
+          & ./eng/common/spelling/node_modules/.bin/cspell lint --config .vscode/cspell.json --no-must-find-files --root . @files
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate package README annotations
+        if: ${{ !cancelled() }}
+        run: |
+          $failures = & ./eng/scripts/Process-PackageReadMe.ps1 -Command validate-all
+          if ($failures) { throw 'README validation failed' }
+      - name: Run repository npm wrapper tests
+        if: ${{ !cancelled() }}
+        run: |
+          node --test eng/npm/test/wrapper.test.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: tests-${{ matrix.candidate }}-${{ matrix.os }}
+          path: |
+            source/**/TestResults/*.trx
+            source/.work/tests/testResults/*.trx
