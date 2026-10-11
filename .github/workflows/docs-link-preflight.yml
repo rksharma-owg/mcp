@@ -1,0 +1,29 @@
+name: Documentation link preflight
+on:
+  push:
+    branches: [codex/docs-link-preflight]
+permissions:
+  contents: read
+jobs:
+  links:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: [adme, fileshares]
+    env:
+      TESTED_SHA: ${{ matrix.candidate == 'adme' && 'c82c61ae157a42f593e541d68c6b3325274160f7' || '128cc0cb029ea0e0a1ccead7aae4bae5dfbf6d25' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.TESTED_SHA }}
+          fetch-depth: 0
+      - name: Verify source and links using the upstream verifier
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne $env:TESTED_SHA) { throw 'Unexpected tested revision' }
+          Write-Host "Tested SHA: $env:TESTED_SHA"
+          $files = @(git diff --name-only '406c2dbd3b7ef1e4341e449103732f0cb7b59c47...HEAD')
+          ./eng/common/scripts/Verify-Links.ps1 -urls $files -rootUrl "file://$env:GITHUB_WORKSPACE/" -recursive:$false -ignoreLinksFile "$env:GITHUB_WORKSPACE/eng/ignore-links.txt" -checkLinkGuidance:$true -localBuildRepoName 'microsoft/mcp' -localBuildRepoPath $env:GITHUB_WORKSPACE -inputCacheFile 'https://azuresdkartifacts.blob.core.windows.net/verify-links-cache/verify-links-cache.txt' -allowRelativeLinksFile "$env:GITHUB_WORKSPACE/eng/common/scripts/allow-relative-links.txt"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
